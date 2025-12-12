@@ -5,6 +5,7 @@
 ![React](https://img.shields.io/badge/React-19-blue?logo=react)
 ![Vite](https://img.shields.io/badge/Vite-7-purple?logo=vite)
 ![Netlify](https://img.shields.io/badge/Netlify-ready-00C7B7?logo=netlify)
+[![Netlify Status](https://api.netlify.com/api/v1/badges/e98b7c2e-e642-4595-be45-e86d5ec132f8/deploy-status)](https://app.netlify.com/projects/githug/deploys)
 
 ## Features
 
