@@ -500,7 +500,10 @@ const normalizeUser = (user, matchInfo) => ({
 
 export const loginWithGithub = () => {
     const clientId = import.meta.env.GITHUG_CLIENT_ID;
-    const redirectUri = import.meta.env.GITHUG_REDIRECT_URI || `${window.location.origin}/callback`;
+    
+    // Always use the current origin + /callback to ensure consistency with token exchange
+    // This prevents mismatch errors between env vars and actual URL
+    const redirectUri = `${window.location.origin}/callback`;
 
     if (!clientId) {
         console.warn('No Client ID. Using mock mode.');
