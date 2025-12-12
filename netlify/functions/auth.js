@@ -26,9 +26,11 @@ export async function handler(event) {
   }
 
   let code;
+  let clientRedirectUri;
   try {
     const body = JSON.parse(event.body || '{}');
     code = body.code;
+    clientRedirectUri = body.redirect_uri;
   } catch {
     return {
       statusCode: 400,
@@ -47,7 +49,7 @@ export async function handler(event) {
 
   const clientId = process.env.GITHUG_SERVER_CLIENT_ID;
   const clientSecret = process.env.GITHUG_SERVER_CLIENT_SECRET;
-  const redirectUri = process.env.GITHUG_SERVER_REDIRECT_URI || 'http://localhost:5173/callback';
+  const redirectUri = clientRedirectUri || process.env.GITHUG_SERVER_REDIRECT_URI || 'http://localhost:5173/callback';
 
   if (!clientId || !clientSecret) {
     return {

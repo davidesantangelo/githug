@@ -136,7 +136,10 @@ function App() {
                 const res = await fetch(functionUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code }),
+                    body: JSON.stringify({ 
+                        code,
+                        redirect_uri: window.location.origin + '/callback'
+                    }),
                 })
                 const data = await res.json()
                 if (!res.ok || data.error) {
