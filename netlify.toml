@@ -3,6 +3,12 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[build.environment]
+  # Exclude localhost URLs from secrets scanning - these are public config values
+  SECRETS_SCAN_OMIT_KEYS = "GITHUG_FUNCTION_URL,GITHUG_SERVER_REDIRECT_URI,GITHUG_REDIRECT_URI"
+  # Exclude documentation and example files from secrets scanning
+  SECRETS_SCAN_OMIT_PATHS = ".env.example,README.md,SETUP_GITHUB_AUTH.md"
+
 [dev]
   framework = "#static"
   port = 8888

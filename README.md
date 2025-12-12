@@ -35,33 +35,40 @@ npm install
 # Configure (see Setup below)
 cp .env.example .env
 
-# Run full stack (Client + Functions)
-npm install -g netlify-cli
-netlify dev
+# Run full stack (Split Terminal - Recommended)
 
-# Or run separately (if needed)
-# Terminal 1: npm run dev:functions
-# Terminal 2: npm run dev
+# Terminal 1: Backend (Netlify Functions)
+npm run dev:functions
+
+# Terminal 2: Frontend (Vite)
+npm run dev
 
 # Or Vite only (mock mode, no OAuth)
 npm run dev
 ```
 
-Open [http://localhost:8888](http://localhost:8888) (Netlify) or [http://localhost:5173](http://localhost:5173) (Vite only).
+- **Frontend**: [http://localhost:5173](http://localhost:5173)
+- **Backend**: [http://localhost:9999](http://localhost:9999)
 
 ## Setup
 
 1. Create a [GitHub OAuth App](https://github.com/settings/developers) → **OAuth Apps** → **New OAuth App**
 2. Set callback URL: `http://localhost:5173/callback`
+
+   > **Important**: Use port **5173** even with `netlify dev` (port 8888 is just a proxy layer).
+
 3. Copy Client ID & generate a Client Secret
-4. Edit `.env` (OAuth only; no PAT fallback):
+4. Edit `.env`:
+
+4. Edit `.env` (Set ports correctly):
 
 ```env
-# Frontend
+# Frontend (exposed to browser)
 GITHUG_CLIENT_ID=your_client_id
 GITHUG_REDIRECT_URI=http://localhost:5173/callback
+GITHUG_FUNCTION_URL=http://localhost:9999/.netlify/functions/auth
 
-# Backend (Netlify function)
+# Backend (Netlify function - keep secret!)
 GITHUG_SERVER_CLIENT_ID=your_client_id
 GITHUG_SERVER_CLIENT_SECRET=your_client_secret
 GITHUG_SERVER_REDIRECT_URI=http://localhost:5173/callback

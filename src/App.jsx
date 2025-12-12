@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles } from 'lucide-react'
+import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles, ChevronDown } from 'lucide-react'
 import { loginWithGithub, getProfile, searchUsers, clearCaches } from './services/github'
 
 const MATCHES_CACHE_KEY = 'githug_cached_matches_v1'
@@ -41,7 +41,7 @@ const clearMatchesCache = () => {
 }
 
 const SkeletonCard = () => (
-    <div className="p-6 rounded-2xl bg-card border border-border/40 dark:border-border/90 animate-pulse flex flex-col h-[320px]">
+    <div className="p-6 rounded-3xl bg-card border border-border/60 dark:border-border/30 shadow-sm animate-pulse flex flex-col h-[320px]">
         <div className="flex items-center gap-4 mb-6">
             <div className="w-16 h-16 rounded-full bg-secondary/50"></div>
             <div className="flex-1 space-y-2">
@@ -350,48 +350,42 @@ function App() {
             </div>
         ) : (
             <div className="space-y-12 animate-in fade-in duration-700 py-12 md:py-20">
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border/40 dark:border-border/90 pb-8">
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-4">
+                <div className="mb-12">
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                        <div className="space-y-2 relative">
+                            {/* Ambient Glow */}
+                            <div className="absolute -left-10 -top-10 w-32 h-32 bg-primary/20 blur-[100px] rounded-full pointer-events-none"></div>
+                            
+                            <div className="text-xs font-bold tracking-widest text-primary/60 uppercase mb-2 ml-1">GitHug</div>
 
-
-                            {(searching || loadingMore) && (
-                                <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground bg-secondary/40 border border-border/50 rounded-full px-2.5 py-1">
-                                    <span className="w-3 h-3 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-                                    {searching ? 'Matching…' : 'Loading…'}
-                                </span>
-                            )}
-                        </div>
-
-                        <div className="space-y-1">
-                            <h2 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
-                                <span className="text-foreground">Git</span>
-                                <span className="text-primary">Hug</span>
+                            <h2 className="relative text-4xl md:text-6xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/70 leading-normal pb-2 pr-2">
                                 {isInitialSearch ? (
-                                    <span className="text-muted-foreground font-semibold">{' '}is finding{' '}<span className="text-primary">New</span>{' '}<span className="text-foreground">Users</span>{' '}for you…</span>
+                                    <span>Finding matches...</span>
                                 ) : (
                                     <>
-                                        <span className="text-muted-foreground font-semibold">{' '}found{' '}</span>
-                                        <span className="inline-flex items-center justify-center px-3 py-0.5 rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25 shadow-sm">
-                                            {matches.length}
-                                        </span>
-                                        <span className="text-primary">{' '}New</span>
-                                        <span className="text-foreground">{' '}Users</span>
+                                        Found <span className="mx-2 inline-flex items-center justify-center px-4 py-1 rounded-full bg-primary text-primary-foreground text-3xl md:text-5xl align-middle shadow-lg hover:scale-105 transition-transform duration-300">{matches.length}</span> New Users
                                     </>
                                 )}
                             </h2>
-                            <p className="text-muted-foreground text-sm md:text-base">
+                            <p className="text-lg md:text-xl text-muted-foreground/80 font-medium max-w-2xl leading-relaxed">
                                 {isInitialSearch 
                                     ? 'Analyzing your repos, languages and starred projects…'
                                     : searching 
-                                        ? 'Searching for more users…'
-                                        : `Users you don't follow yet, matched by your public activity. Showing ${matches.length} so far.`
+                                        ? 'Scanning the Octoverse for more candidates…'
+                                        : "Users you don't follow yet, matched by your public activity."
                                 }
                             </p>
                         </div>
 
+                        {(searching || loadingMore) && (
+                            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-secondary/50 backdrop-blur-sm border border-border/50 shadow-sm animate-pulse">
+                                <div className="w-2 h-2 rounded-full bg-primary animate-ping" />
+                                <span className="text-xs font-semibold text-primary">{searching ? 'Analyzing...' : 'Loading more...'}</span>
+                            </div>
+                        )}
+
                         {authError && (
-                            <div className="text-sm text-muted-foreground/90 border border-destructive/30 bg-destructive/5 rounded-xl px-4 py-3 max-w-2xl">
+                            <div className="text-sm text-destructive border-l-2 border-destructive pl-3 py-1 bg-destructive/5 rounded-r-md">
                                 {authError}
                             </div>
                         )}
@@ -400,7 +394,7 @@ function App() {
 
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {matches.map((match) => (
-                            <div key={match.id} className="group flex flex-col p-6 rounded-3xl bg-card border border-border/40 dark:border-border/90 hover:border-border/70 dark:hover:border-border hover:shadow-xl hover:shadow-primary/5 dark:hover:bg-secondary/10 transition-all duration-300">
+                            <div key={match.id} className="group flex flex-col p-6 rounded-xl bg-card border border-border/60 dark:border-border/30 shadow-sm hover:shadow-2xl hover:shadow-primary/10 dark:hover:bg-card/80 hover:-translate-y-1 transition-all duration-300">
                                 {/* Match Score Badge */}
                                 {match.matchScore > 0 && (
                                     <div className="flex items-center justify-between mb-4">
@@ -482,24 +476,33 @@ function App() {
                 </div>
 
                 {!searching && matches.length > 0 && (
-                    <div className="pt-8 flex flex-col items-center gap-3">
+                    <div className="pt-2 flex flex-col items-center gap-3">
                         {hasMore ? (
                             <>
                                 <button
                                     type="button"
                                     onClick={handleLoadMore}
                                     disabled={loadingMore}
-                                    className="px-6 py-3 rounded-2xl bg-secondary/70 hover:bg-secondary border border-border/60 text-sm font-semibold transition-colors disabled:opacity-60"
+                                    className="w-full max-w-xs px-6 py-4 rounded-2xl bg-secondary/80 hover:bg-secondary border border-border/60 text-sm font-bold tracking-wide transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
                                 >
-                                    {loadingMore ? 'Loading…' : 'load more'}
+                                    {loadingMore ? (
+                                        <>
+                                            <span className="w-4 h-4 rounded-full border-2 border-foreground/30 border-t-foreground animate-spin" />
+                                            Loading more...
+                                        </>
+                                    ) : (
+                                        <>
+                                            Load More Users
+                                            <ChevronDown className="w-4 h-4 opacity-70" />
+                                        </>
+                                    )}
                                 </button>
                             </>
                         ) : (
-                            <div className="text-xs text-muted-foreground">
+                            <div className="text-xs text-muted-foreground pt-4">
                                 {matches.length} new users found. People you follow are excluded.
                             </div>
                         )}
-
                     </div>
                 )}
             </div>
