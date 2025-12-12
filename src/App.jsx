@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles, ChevronDown } from 'lucide-react'
+import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles, RefreshCcw, Settings, Users } from 'lucide-react'
 import { loginWithGithub, getProfile, searchUsers, clearCaches } from './services/github'
 
 const MATCHES_CACHE_KEY = 'githug_cached_matches_v1'
@@ -114,6 +114,15 @@ function App() {
           document.documentElement.classList.remove('dark')
           localStorage.theme = 'light'
       }
+  }
+  
+  const handleRefresh = () => {
+      clearMatchesCache()
+      clearCaches()
+      // Clear ALL session storage to ensure following list is re-fetched
+      sessionStorage.clear()
+      // Force a complete navigation reload
+      window.location.replace(window.location.origin)
   }
 
     // Handle OAuth redirect back to /callback?code=...
@@ -291,15 +300,69 @@ function App() {
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors duration-300 font-sans selection:bg-primary/20">
       
+      {/* Top Center Controls - Only when logged out */}
+      {!user && (
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-2 rounded-full bg-background/80 backdrop-blur-md border border-border/60 shadow-md">
+              <a
+                  href="https://github.com/davidesantangelo/githug"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-3 rounded-full hover:bg-secondary/80 transition-colors text-muted-foreground hover:text-foreground"
+                  aria-label="View source on GitHub"
+              >
+                  <Github className="w-5 h-5" />
+              </a>
+              <div className="w-px h-5 bg-border/60 my-1"></div>
+              <button 
+                  onClick={toggleTheme}
+                  className="p-3 rounded-full hover:bg-secondary/80 transition-colors text-muted-foreground hover:text-foreground"
+                  aria-label="Toggle theme"
+              >
+                  {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+          </div>
+      )}
+
       {/* Top Right Controls */}
       <div className="fixed top-6 right-6 z-50 flex items-center gap-4">
-          <button 
-            onClick={toggleTheme}
-            className="p-3 rounded-full bg-secondary/50 backdrop-blur-sm hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground border border-border/50 shadow-sm"
-            aria-label="Toggle theme"
-          >
-              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
+          {/* Expandable Controls Menu - Only when logged in */}
+          {user && (
+              <div className="group relative flex items-center">
+                  {/* Settings Icon - Always Visible */}
+                  <div className="p-3 rounded-full bg-secondary/50 backdrop-blur-sm border border-border/50 shadow-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                      <Settings className="w-5 h-5" />
+                  </div>
+                  
+                  {/* Expanded Icons - Show on Hover */}
+                  <div className="absolute right-full flex items-center gap-2 pr-2 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-300 pointer-events-none group-hover:pointer-events-auto">
+                      <a
+                          href="https://github.com/davidesantangelo/githug"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-3 rounded-full bg-secondary/50 backdrop-blur-sm hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground border border-border/50 shadow-sm"
+                          aria-label="View source on GitHub"
+                      >
+                          <Github className="w-5 h-5" />
+                      </a>
+                      
+                      <button 
+                          onClick={handleRefresh}
+                          className="p-3 rounded-full bg-secondary/50 backdrop-blur-sm hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground border border-border/50 shadow-sm"
+                          aria-label="Refresh and clear cache"
+                      >
+                          <RefreshCcw className="w-5 h-5" />
+                      </button>
+
+                      <button 
+                          onClick={toggleTheme}
+                          className="p-3 rounded-full bg-secondary/50 backdrop-blur-sm hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground border border-border/50 shadow-sm"
+                          aria-label="Toggle theme"
+                      >
+                          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                      </button>
+                  </div>
+              </div>
+          )}
           
           {user && (
               <div className="flex items-center gap-3 bg-secondary/50 backdrop-blur-sm border border-border/50 rounded-full pl-1 pr-4 py-1 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
@@ -315,7 +378,7 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <main className="min-h-screen flex flex-col p-6 max-w-7xl mx-auto">
+      <main className="min-h-screen flex flex-col p-6 max-w-[1600px] mx-auto">
         {!user ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center space-y-8 max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
                 <div className="relative">
@@ -347,6 +410,8 @@ function App() {
                                             </div>
                                         )}
                 </div>
+                
+
             </div>
         ) : (
             <div className="space-y-12 animate-in fade-in duration-700 py-12 md:py-20">
@@ -395,15 +460,24 @@ function App() {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {matches.map((match) => (
                             <div key={match.id} className="group flex flex-col p-6 rounded-xl bg-card border border-border/60 dark:border-border/30 shadow-sm hover:shadow-2xl hover:shadow-primary/10 dark:hover:bg-card/80 hover:-translate-y-1 transition-all duration-300">
-                                {/* Match Score Badge */}
-                                {match.matchScore > 0 && (
-                                    <div className="flex items-center justify-between mb-4">
+                                {/* Match Score & Followers */}
+                                <div className="flex items-center justify-between mb-4">
+                                    {match.matchScore > 0 && (
                                         <div className="flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 py-1 px-2.5 rounded-full">
                                             <Sparkles className="w-3 h-3" />
                                             {match.matchScore}% match
                                         </div>
+                                    )}
+                                    {/* Followers Count */}
+                                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-secondary/50 py-1 px-2.5 rounded-full border border-border/40">
+                                        <Users className="w-3 h-3" />
+                                        {((num) => {
+                                            if (!num) return 0;
+                                            if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+                                            return num;
+                                        })(match.followers)}
                                     </div>
-                                )}
+                                </div>
                                 
                                 <div className="flex items-center gap-4 mb-4">
                                     <div className="relative">
@@ -416,15 +490,19 @@ function App() {
                                 </div>
                                 
                                 <div className="flex-1 space-y-3">
-                                    {/* Languages */}
+                                    {/* Languages - Enhanced Badges */}
                                     {match.languages && match.languages.length > 0 && (
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <Code className="w-3 h-3 text-muted-foreground" />
                                             {match.languages.slice(0, 3).map((lang) => (
-                                                <span key={lang} className="text-xs font-medium text-muted-foreground bg-secondary/50 py-1 px-2 rounded-md">
+                                                <span key={lang} className="text-xs font-semibold text-foreground/80 bg-secondary border border-border/50 py-1 px-2.5 rounded-md shadow-sm">
                                                     {lang}
                                                 </span>
                                             ))}
+                                            {match.languages.length > 3 && (
+                                                <span className="text-[10px] font-medium text-muted-foreground bg-secondary/30 py-0.5 px-1.5 rounded-md">
+                                                    +{match.languages.length - 3}
+                                                </span>
+                                            )}
                                         </div>
                                     )}
                                     
@@ -493,7 +571,6 @@ function App() {
                                     ) : (
                                         <>
                                             Load More Users
-                                            <ChevronDown className="w-4 h-4 opacity-70" />
                                         </>
                                     )}
                                 </button>
