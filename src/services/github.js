@@ -44,18 +44,26 @@ class LRUCache {
     get(key) {
         const entry = this.cache.get(key);
         if (!entry) return undefined;
-        if (Date.now() > entry.expiresAt) {
+        
+        const now = Date.now();
+        if (now > entry.expiresAt) {
             this.cache.delete(key);
             return undefined;
         }
-        // Move to end (most recently used)
-        this.cache.delete(key);
-        this.cache.set(key, entry);
+        
+        // Move to end only if not already the most recent
+        if (this.cache.size > 1) {
+            this.cache.delete(key);
+            this.cache.set(key, entry);
+        }
         return entry.value;
     }
 
     set(key, value, ttlMs = this.ttlMs) {
-        if (this.cache.size >= this.maxSize) {
+        // If key exists, just update it
+        if (this.cache.has(key)) {
+            this.cache.delete(key);
+        } else if (this.cache.size >= this.maxSize) {
             // Remove oldest (first) entry
             const oldest = this.cache.keys().next().value;
             this.cache.delete(oldest);
@@ -165,15 +173,25 @@ const parallel = async (items, concurrency, fn) => {
 
 /**
  * Extract languages and topics from repos in one pass
+ * Optimized: weights recent activity and popularity, filters low-quality repos
  */
 const analyzeRepos = (repos) => {
     const langCount = {};
     const topicCount = {};
+    const now = Date.now();
 
     for (const repo of repos) {
+        // Skip forks and archived repos
+        if (repo.fork || repo.archived) continue;
+
         if (repo.language) {
-            langCount[repo.language] = (langCount[repo.language] || 0) + (repo.stargazers_count || 1);
+            // Weight by stars + recency (repos pushed in last 90 days get 2x weight)
+            const daysSincePush = (now - new Date(repo.pushed_at || 0).getTime()) / (1000 * 60 * 60 * 24);
+            const recencyMultiplier = daysSincePush < 90 ? 2 : 1;
+            const weight = (repo.stargazers_count || 1) * recencyMultiplier;
+            langCount[repo.language] = (langCount[repo.language] || 0) + weight;
         }
+        
         for (const topic of repo.topics || []) {
             topicCount[topic] = (topicCount[topic] || 0) + 1;
         }
@@ -299,22 +317,34 @@ const sanitizeQuery = (str) => {
 
 const buildSearchQueries = (profile) => {
     const queries = [];
+    const seenQueries = new Set();
 
-    // Language-based searches (most reliable)
-    for (const lang of profile.languages.slice(0, 2)) {
-        queries.push(`type:user followers:>10 language:${lang}`);
+    // Helper to add unique queries
+    const addQuery = (q) => {
+        if (!seenQueries.has(q)) {
+            queries.push(q);
+            seenQueries.add(q);
+        }
+    };
+
+    // Language-based searches (most reliable) - prioritize top language
+    if (profile.languages[0]) {
+        addQuery(`type:user followers:>20 language:${profile.languages[0]} sort:followers`);
+    }
+    if (profile.languages[1]) {
+        addQuery(`type:user followers:>10 language:${profile.languages[1]}`);
     }
 
-    // Location + language
+    // Location + language (combined filter more effective)
     const country = sanitizeQuery(profile.location.split(',').pop());
     if (country && profile.languages[0]) {
-        queries.push(`type:user followers:>5 location:"${country}" language:${profile.languages[0]}`);
+        addQuery(`type:user location:"${country}" language:${profile.languages[0]}`);
     }
 
-    // Topic in bio
+    // Topic in bio - only for substantial topics
     for (const topic of profile.topics.slice(0, 2)) {
-        if (topic.length >= 3) {
-            queries.push(`type:user followers:>5 ${topic} in:bio`);
+        if (topic.length >= 4 && !/^\d+$/.test(topic)) {
+            addQuery(`type:user followers:>5 ${topic} in:bio`);
         }
     }
 
@@ -324,20 +354,27 @@ const buildSearchQueries = (profile) => {
 const searchCandidates = async (token, profile, { excludeSet, signal } = {}) => {
     const queries = buildSearchQueries(profile);
     const candidates = new Map(); // login -> candidate object
+    const targetCandidates = 50;
 
     // Priority 1: Starred owners (high-value, zero API cost)
+    // These are pre-vetted by the user's own stars
     for (const owner of profile.starredOwners.slice(0, 15)) {
         const login = owner.toLowerCase();
         if (!excludeSet.has(login)) {
             candidates.set(login, { login: owner, priority: 1 });
         }
+        if (candidates.size >= targetCandidates) {
+            return [...candidates.values()].sort((a, b) => a.priority - b.priority);
+        }
     }
 
-    // Priority 2: Search results (run queries in parallel batches of 2)
-    const batchSize = 2;
-    for (let i = 0; i < queries.length && candidates.size < 60; i += batchSize) {
+    // Priority 2: Search results (run queries in parallel batches)
+    const batchSize = 3;
+    for (let i = 0; i < queries.length; i += batchSize) {
+        // Early exit if we have enough candidates
+        if (candidates.size >= targetCandidates) break;
+        
         const batch = queries.slice(i, i + batchSize);
-
         const results = await Promise.all(
             batch.map(async (query) => {
                 const cacheKey = `search:${query}`;
@@ -358,6 +395,7 @@ const searchCandidates = async (token, profile, { excludeSet, signal } = {}) => 
             })
         );
 
+        // Process results and deduplicate
         for (const items of results) {
             for (const u of items) {
                 const login = u.login?.toLowerCase();
@@ -403,75 +441,105 @@ const getCandidateData = async (token, login, { signal } = {}) => {
 
 /**
  * Calculate match score between current user and candidate
+ * Optimized: better weighting, memoization, and early exits
  */
 const calculateScore = (myProfile, candidate) => {
     const { user, languages: candLangs, recentPush } = candidate;
     const reasons = [];
     let score = 0;
+    let maxPossibleScore = 0;
 
-    // 1. Language overlap (weighted by position in user's list)
-    const langOverlap = myProfile.languages.filter((l) => candLangs.includes(l));
+    // Pre-compute for optimization
+    const candLogin = (user.login || '').toLowerCase();
+    const bio = (user.bio || '').toLowerCase();
+    
+    // 1. Language overlap (weighted by position - earlier = more important)
+    const langOverlap = [];
+    for (let i = 0; i < myProfile.languages.length; i++) {
+        if (candLangs.includes(myProfile.languages[i])) {
+            // Higher weight for primary languages (position 0, 1)
+            const positionWeight = Math.max(1, 3 - i);
+            score += 10 * positionWeight;
+            langOverlap.push(myProfile.languages[i]);
+        }
+    }
     if (langOverlap.length > 0) {
-        const langScore = Math.min(WEIGHTS.languageOverlap, langOverlap.length * 10);
-        score += langScore;
+        score = Math.min(score, WEIGHTS.languageOverlap);
         reasons.push(`Uses ${langOverlap.slice(0, 3).join(', ')}`);
     }
+    maxPossibleScore += WEIGHTS.languageOverlap;
 
-    // 2. Starred owner bonus
-    const candLogin = (user.login || '').toLowerCase();
-    if (myProfile.starredOwners.map((s) => s.toLowerCase()).includes(candLogin)) {
+    // 2. Starred owner bonus (strong signal)
+    if (myProfile.starredOwners.some(s => s.toLowerCase() === candLogin)) {
         score += WEIGHTS.starredOwner;
         reasons.push('You starred their repos');
     }
+    maxPossibleScore += WEIGHTS.starredOwner;
 
-    // 3. Topic overlap
-    const bio = (user.bio || '').toLowerCase();
-    const allTopics = [...new Set([...myProfile.topics, ...myProfile.starredTopics])];
-    const matchedTopics = allTopics.filter((t) => t.length >= 3 && bio.includes(t.toLowerCase()));
-    if (matchedTopics.length > 0) {
-        score += Math.min(WEIGHTS.topicOverlap, matchedTopics.length * 6);
-        reasons.push(`Bio: ${matchedTopics.slice(0, 2).join(', ')}`);
-    }
-
-    // 4. Bio keyword match (different from topic overlap - checks user's own topics)
-    if (!matchedTopics.length && bio) {
-        const hit = myProfile.topics.find((t) => t.length >= 3 && bio.includes(t.toLowerCase()));
-        if (hit) {
-            score += WEIGHTS.bioKeyword;
-            reasons.push(`Bio mentions: ${hit}`);
+    // 3. Topic overlap (combined check)
+    const matchedTopics = new Set();
+    if (bio) {
+        // Check own topics first (stronger signal)
+        for (const topic of myProfile.topics) {
+            if (topic.length >= 3 && bio.includes(topic.toLowerCase())) {
+                matchedTopics.add(topic);
+            }
+        }
+        // Then starred topics
+        for (const topic of myProfile.starredTopics) {
+            if (topic.length >= 3 && bio.includes(topic.toLowerCase()) && matchedTopics.size < 5) {
+                matchedTopics.add(topic);
+            }
         }
     }
+    
+    if (matchedTopics.size > 0) {
+        const topicScore = Math.min(WEIGHTS.topicOverlap, matchedTopics.size * 6);
+        score += topicScore;
+        reasons.push(`Bio: ${[...matchedTopics].slice(0, 2).join(', ')}`);
+    }
+    maxPossibleScore += WEIGHTS.topicOverlap;
 
-    // 5. Same country
+    // 4. Same country
     const myCountry = (myProfile.location.split(',').pop() || '').trim().toLowerCase();
     const theirCountry = ((user.location || '').split(',').pop() || '').trim().toLowerCase();
-    if (myCountry && theirCountry && myCountry === theirCountry) {
+    if (myCountry && theirCountry && myCountry.length > 2 && myCountry === theirCountry) {
         score += WEIGHTS.sameCountry;
         reasons.push(`Near you: ${theirCountry}`);
     }
+    maxPossibleScore += WEIGHTS.sameCountry;
 
-    // 6. Follower ratio (influence indicator)
+    // 5. Follower ratio (influence indicator) - logarithmic scale
     const followers = user.followers || 0;
     const following = user.following || 1;
-    if (followers > 50 && followers / following > 2) {
-        score += Math.min(WEIGHTS.followerRatio, Math.floor(Math.log10(followers) * 2));
+    if (followers > 50) {
+        const ratio = followers / following;
+        if (ratio > 2) {
+            const influenceScore = Math.min(WEIGHTS.followerRatio, Math.floor(Math.log10(followers) * 2));
+            score += influenceScore;
+        }
     }
+    maxPossibleScore += WEIGHTS.followerRatio;
 
-    // 7. Recent activity bonus
+    // 6. Recent activity bonus (tiered)
     if (recentPush) {
         const daysSincePush = (Date.now() - new Date(recentPush).getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSincePush < 30) {
+        if (daysSincePush < 7) {
             score += WEIGHTS.recentActivity;
+            reasons.push('Very active');
+        } else if (daysSincePush < 30) {
+            score += Math.floor(WEIGHTS.recentActivity * 0.7);
             reasons.push('Recently active');
         }
     }
+    maxPossibleScore += WEIGHTS.recentActivity;
 
-    // Normalize to 0-99
-    score = Math.max(0, Math.min(99, Math.round(score)));
+    // Normalize to 0-99 (percentage-like scale)
+    score = Math.max(0, Math.min(99, Math.round((score / maxPossibleScore) * 99)));
 
     return {
         score,
-        reasons,
+        reasons: reasons.slice(0, 3), // Limit reasons to avoid clutter
         languages: langOverlap.slice(0, 5),
     };
 };
