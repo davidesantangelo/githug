@@ -131,8 +131,10 @@ function App() {
             setLoading(true)
             setAuthError('')
             try {
+                console.log('[OAuth] Starting token exchange for code:', code?.substring(0, 10) + '...')
                 // Use env var for function URL (allows different ports in dev vs prod)
                 const functionUrl = import.meta.env.GITHUG_FUNCTION_URL || '/.netlify/functions/auth'
+                console.log('[OAuth] Calling function:', functionUrl)
                 const res = await fetch(functionUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -141,13 +143,17 @@ function App() {
                         redirect_uri: window.location.origin + '/callback'
                     }),
                 })
+                console.log('[OAuth] Response status:', res.status)
                 const data = await res.json()
+                console.log('[OAuth] Response data:', data)
                 if (!res.ok || data.error) {
                     throw new Error(data.error_description || data.error || 'Token exchange failed')
                 }
+                console.log('[OAuth] Token received, saving and redirecting...')
                 localStorage.setItem('githug_token', data.access_token)
                 window.location.replace(window.location.origin) // reload without ?code
             } catch (e) {
+                console.error('[OAuth] Token exchange failed:', e)
                 setAuthError(e?.message || 'Token exchange failed')
                 setLoading(false)
             }
