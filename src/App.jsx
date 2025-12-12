@@ -428,7 +428,7 @@ function App() {
                                     <span>Finding matches...</span>
                                 ) : (
                                     <>
-                                        Found <span className="mx-2 inline-flex items-center justify-center px-4 py-1 rounded-full bg-primary text-primary-foreground text-3xl md:text-5xl align-middle shadow-lg hover:scale-105 transition-transform duration-300">{matches.length}</span> New Users
+                                        Found <span className="mx-2 inline-flex items-center justify-center px-4 py-1 rounded-lg bg-primary text-primary-foreground text-3xl md:text-5xl align-middle shadow-lg hover:scale-105 transition-transform duration-300">{matches.length}</span> New Users
                                     </>
                                 )}
                             </h2>
