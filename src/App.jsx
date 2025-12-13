@@ -40,6 +40,9 @@ const clearMatchesCache = () => {
     }
 }
 
+// Key to force fresh fetch on next page load
+const FORCE_REFRESH_KEY = 'githug_force_refresh'
+
 const SkeletonCard = () => (
     <div className="p-6 rounded-3xl bg-card border border-border/60 dark:border-border/30 shadow-sm animate-pulse flex flex-col h-[320px]">
         <div className="flex items-center gap-4 mb-6">
@@ -76,9 +79,18 @@ function App() {
       const isInitialSearch = Boolean(user) && !initialLoadComplete
 
         // Hydrate cached matches immediately (so reload feels like "load more")
+        // BUT skip if user explicitly requested a refresh
         useEffect(() => {
             const token = localStorage.getItem('githug_token')
             if (!token) return
+            
+            // Check if user requested a fresh fetch
+            const forceRefresh = sessionStorage.getItem(FORCE_REFRESH_KEY)
+            if (forceRefresh) {
+                sessionStorage.removeItem(FORCE_REFRESH_KEY)
+                return // Skip cache hydration, will fetch fresh data
+            }
+            
             const cached = readMatchesCache()
             if (!cached) return
             setMatches(cached.matches)
@@ -117,10 +129,10 @@ function App() {
   }
   
   const handleRefresh = () => {
+      // Set flag to skip cache hydration on next load
+      sessionStorage.setItem(FORCE_REFRESH_KEY, 'true')
       clearMatchesCache()
       clearCaches()
-      // Clear ALL session storage to ensure following list is re-fetched
-      sessionStorage.clear()
       // Force a complete navigation reload
       window.location.replace(window.location.origin)
   }
@@ -192,8 +204,11 @@ function App() {
         }
 
         if (token) {
+            // Check if user requested a fresh fetch (skip cache)
+            const forceRefresh = sessionStorage.getItem(FORCE_REFRESH_KEY)
+            
             // Check if we have cached results to show immediately
-            const cached = readMatchesCache()
+            const cached = !forceRefresh && readMatchesCache()
             const hasCachedResults = cached && cached.matches.length > 0
             
             setLoading(true)
