@@ -258,7 +258,12 @@ function App() {
                 })
                 .catch((e) => {
                     localStorage.removeItem('githug_token')
-                    setAuthError(e?.message || 'GitHub authentication failed')
+                    // Silently fail on auth errors (expired token), but show others
+                    if (e?.status === 401 || e?.message?.toLowerCase()?.includes('bad credentials')) {
+                        setAuthError('')
+                    } else {
+                        setAuthError(e?.message || 'GitHub authentication failed')
+                    }
                     setLoading(false)
                 })
         }

@@ -17,6 +17,22 @@
 - Deploy-ready for Netlify
 - **Architecture**: Separated Client (React) and Server (Netlify Functions)
 
+## Matching Algorithm
+
+GitHug uses a weighted scoring system (0-100%) to find your best matches. It analyzes your public GitHub profile and compares it with potential candidates.
+
+**Key Factors:**
+
+1.  **Tech Stack (30%)**: High overlap in your primary languages (e.g. both use Rust & TypeScript).
+2.  **Admired Work (20%)**: Matches who are maintainers of repositories you've starred.
+3.  **Shared Interests (18%)**: Common topics in repositories and bio (e.g. "machine-learning", "react").
+4.  **Bio Context (12%)**: Keywords in their bio that match your interests.
+5.  **Proximity (8%)**: Users located in the same country/region.
+6.  **Influence (7%)**: Balanced follower/following ratio.
+7.  **Activity (5%)**: Recent code pushes (within last 7-30 days).
+
+*Note: You will never be matched with people you already follow.*
+
 ## Architecture
 
 GitHug uses a **hybrid architecture** to ensure security and performance:
