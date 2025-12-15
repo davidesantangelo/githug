@@ -145,7 +145,7 @@ function App() {
             try {
                 console.log('[OAuth] Starting token exchange for code:', code?.substring(0, 10) + '...')
                 // Use env var for function URL (allows different ports in dev vs prod)
-                const functionUrl = import.meta.env.GITHUG_FUNCTION_URL || '/.netlify/functions/auth'
+                const functionUrl = import.meta.env.GITHUG_FUNCTION_URL || '/api/auth'
                 console.log('[OAuth] Calling function:', functionUrl)
                 const res = await fetch(functionUrl, {
                     method: 'POST',

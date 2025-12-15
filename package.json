@@ -16,8 +16,6 @@
   "dependencies": {
     "@testing-library/user-event": "^14.6.1",
     "clsx": "^2.1.1",
-    "cors": "^2.8.5",
-    "express": "^4.21.0",
     "framer-motion": "^12.23.26",
     "lucide-react": "^0.560.0",
     "react": "^19.2.0",

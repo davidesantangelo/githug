@@ -12,25 +12,28 @@
     "packageJson": {
       "dependencies": [
         "npm:@eslint/js@^9.39.1",
+        "npm:@testing-library/jest-dom@^6.6.3",
+        "npm:@testing-library/react@^16.3.0",
+        "npm:@testing-library/user-event@^14.6.1",
         "npm:@types/react-dom@^19.2.3",
         "npm:@types/react@^19.2.5",
         "npm:@vitejs/plugin-react@^5.1.1",
         "npm:autoprefixer@^10.4.22",
         "npm:clsx@^2.1.1",
-        "npm:cors@^2.8.5",
         "npm:eslint-plugin-react-hooks@^7.0.1",
         "npm:eslint-plugin-react-refresh@~0.4.24",
         "npm:eslint@^9.39.1",
-        "npm:express@^4.21.0",
         "npm:framer-motion@^12.23.26",
         "npm:globals@^16.5.0",
+        "npm:jsdom@26",
         "npm:lucide-react@0.560",
         "npm:postcss@^8.5.6",
         "npm:react-dom@^19.2.0",
         "npm:react@^19.2.0",
         "npm:tailwind-merge@^3.4.0",
         "npm:tailwindcss@^3.4.17",
-        "npm:vite@^7.2.4"
+        "npm:vite@^7.2.4",
+        "npm:vitest@^3.2.4"
       ]
     }
   }
