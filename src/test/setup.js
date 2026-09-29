@@ -1,15 +1,4 @@
 import '@testing-library/jest-dom'
-import { vi } from 'vitest'
-
-// Mock import.meta.env
-vi.stubGlobal('import', {
-  meta: {
-    env: {
-      GITHUG_CLIENT_ID: '',
-      GITHUG_FUNCTION_URL: '',
-    },
-  },
-})
 
 // Mock window.location
 const mockLocation = {

@@ -1,11 +1,11 @@
 {
   "name": "githug",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:functions": "netlify functions:serve --port 9999",
+    "dev:netlify": "netlify dev --port 8888",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

@@ -39,5 +39,5 @@ dist-ssr
 # Optional eslint cache
 .eslintcache
 
-# GitHub files
-.github
+# Local AI agent tooling (not part of the app)
+.github/agents/

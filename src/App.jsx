@@ -1,8 +1,30 @@
-import { useState, useEffect, useRef } from 'react'
-import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles, RefreshCcw, Settings, Users } from 'lucide-react'
-import { loginWithGithub, getProfile, searchUsers, clearCaches } from './services/github'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { Github, MapPin, Search, Moon, Sun, ArrowRight, ExternalLink, LogOut, Code, Star, Sparkles, RefreshCcw, Settings, Users, UserPlus, UserCheck, X } from 'lucide-react'
+import { loginWithGithub, getProfile, searchUsers, clearCaches, followUser, validateOAuthState } from './services/github'
+import { formatCount } from './lib/utils'
 
 const MATCHES_CACHE_KEY = 'githug_cached_matches_v1'
+
+// localStorage key storing the set of users followed from GitHug, per account
+const followedKeyFor = (login) => `githug_followed_${String(login || '').toLowerCase()}`
+
+const readFollowedSet = (login) => {
+    try {
+        const raw = login ? localStorage.getItem(followedKeyFor(login)) : null
+        const arr = raw ? JSON.parse(raw) : null
+        return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [])
+    } catch {
+        return new Set()
+    }
+}
+
+const writeFollowedSet = (login, set) => {
+    try {
+        localStorage.setItem(followedKeyFor(login), JSON.stringify([...set]))
+    } catch {
+        // ignore storage quota / privacy mode
+    }
+}
 const readMatchesCache = () => {
     try {
         const raw = sessionStorage.getItem(MATCHES_CACHE_KEY)
@@ -70,6 +92,10 @@ function App() {
     const [page, setPage] = useState(1)
   const [theme, setTheme] = useState('dark')
     const [authError, setAuthError] = useState('')
+    const [followed, setFollowed] = useState(() => new Set())
+    const [followPending, setFollowPending] = useState(() => new Set())
+    const [filterQuery, setFilterQuery] = useState('')
+    const [langFilter, setLangFilter] = useState('all')
 
         const searchAbortRef = useRef(null)
 
@@ -105,6 +131,12 @@ function App() {
             writeMatchesCache({ matches, page, hasMore })
         }, [user, matches, page, hasMore])
 
+        // Load the per-account set of users already followed from GitHug
+        useEffect(() => {
+            if (!user?.login) return
+            setFollowed(readFollowedSet(user.login))
+        }, [user?.login])
+
   useEffect(() => {
     // Check system preference on mount
     if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -127,6 +159,58 @@ function App() {
           localStorage.theme = 'light'
       }
   }
+
+    // Client-side filtering of loaded matches (by text and language)
+    const availableLangs = useMemo(
+        () => [...new Set(matches.flatMap((m) => m.languages || []))].sort().slice(0, 15),
+        [matches]
+    )
+
+    const visibleMatches = useMemo(() => {
+        const q = filterQuery.trim().toLowerCase()
+        return matches.filter((m) => {
+            if (langFilter !== 'all' && !(m.languages || []).includes(langFilter)) return false
+            if (!q) return true
+            return (
+                (m.login || '').toLowerCase().includes(q) ||
+                (m.name || '').toLowerCase().includes(q) ||
+                (m.bio || '').toLowerCase().includes(q)
+            )
+        })
+    }, [matches, filterQuery, langFilter])
+
+    const filtersActive = Boolean(filterQuery.trim()) || langFilter !== 'all'
+
+    const clearFilters = () => {
+        setFilterQuery('')
+        setLangFilter('all')
+    }
+
+    const handleFollow = useCallback(async (login) => {
+        if (!user?.login || !login || followed.has(login) || followPending.has(login)) return
+        const token = localStorage.getItem('githug_token')
+        if (!token) return
+
+        setFollowPending((prev) => new Set(prev).add(login))
+        setAuthError('')
+        try {
+            await followUser(token, login)
+            setFollowed((prev) => {
+                const next = new Set(prev)
+                next.add(login)
+                writeFollowedSet(user.login, next)
+                return next
+            })
+        } catch (e) {
+            setAuthError(e?.message || `Could not follow @${login}. Your token may lack the user:follow scope.`)
+        } finally {
+            setFollowPending((prev) => {
+                const next = new Set(prev)
+                next.delete(login)
+                return next
+            })
+        }
+    }, [user, followed, followPending])
   
   const handleRefresh = () => {
       // Set flag to skip cache hydration on next load
@@ -182,11 +266,23 @@ function App() {
             url.searchParams.delete('error_description')
             window.history.replaceState({}, '', url.pathname + url.search + url.hash)
         } else if (code) {
+            // CSRF check: the state nonce must match the one saved before the
+            // redirect to GitHub. Reject the callback otherwise.
+            const state = url.searchParams.get('state')
+            const stateValid = validateOAuthState(state)
+
             // Clean URL immediately, then exchange
             url.searchParams.delete('code')
             url.searchParams.delete('state')
             window.history.replaceState({}, '', url.pathname + url.search + url.hash)
-            exchangeCodeForToken(code)
+
+            if (stateValid) {
+                exchangeCodeForToken(code)
+            } else {
+                console.warn('[OAuth] Rejected callback: state mismatch or missing')
+                setAuthError('Sign-in could not be verified (invalid state). Please try connecting again.')
+                setLoading(false)
+            }
         }
     }, [])
 
@@ -257,12 +353,15 @@ function App() {
                     }
                 })
                 .catch((e) => {
-                    localStorage.removeItem('githug_token')
-                    // Silently fail on auth errors (expired token), but show others
-                    if (e?.status === 401 || e?.message?.toLowerCase()?.includes('bad credentials')) {
+                    const isAuthError = e?.status === 401 || (e?.message || '').toLowerCase().includes('bad credentials')
+                    if (isAuthError) {
+                        // Expired/revoked token: drop it and return to the login screen
+                        localStorage.removeItem('githug_token')
                         setAuthError('')
                     } else {
-                        setAuthError(e?.message || 'GitHub authentication failed')
+                        // Transient failure (network, rate limit, GitHub downtime):
+                        // keep the token and surface the error so the user can retry.
+                        setAuthError(e?.message || 'Could not load your GitHub profile. Please try again.')
                     }
                     setLoading(false)
                 })
@@ -281,6 +380,9 @@ function App() {
     setHasMore(false)
     setPage(1)
     setInitialLoadComplete(false)
+    setFollowed(new Set())
+    setFollowPending(new Set())
+    clearFilters()
         clearMatchesCache()
         clearCaches()  // Clear internal GitHub service caches
   }
@@ -300,9 +402,13 @@ function App() {
         setAuthError('')
         try {
             const nextPage = page + 1
-            const excludeLogins = matches.map(m => m.login)
+            const excludeLogins = [...new Set(matches.map(m => m.login))]
             const res = await searchUsers(token, user, { page: nextPage, pageSize: 12, excludeLogins, signal: controller.signal })
-            setMatches(prev => [...prev, ...res.items])
+            // Merge while guarding against duplicates
+            setMatches(prev => {
+                const seen = new Set(prev.map(m => m.login))
+                return [...prev, ...res.items.filter(m => !seen.has(m.login))]
+            })
             setHasMore(Boolean(res.hasMore))
             setPage(nextPage)
         } catch (e) {
@@ -396,9 +502,12 @@ function App() {
           {user && (
               <div className="flex items-center gap-3 bg-secondary/50 backdrop-blur-sm border border-border/50 rounded-full pl-1 pr-4 py-1 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
                   <img src={user.avatar_url} alt={user.login} className="w-9 h-9 rounded-full ring-2 ring-background" />
-                  <button 
+                  <span className="text-sm font-semibold hidden sm:inline">{user.login}</span>
+                  <button
                     onClick={handleLogout}
-                    className="text-sm font-medium text-muted-foreground hover:text-destructive transition-colors flex items-center gap-2"
+                    className="p-2 rounded-full text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-2"
+                    aria-label={`Log out of GitHug (@${user.login})`}
+                    title="Log out"
                   >
                     <LogOut className="w-4 h-4" />
                   </button>
@@ -486,25 +595,77 @@ function App() {
                     </div>
                 </div>
 
+                {/* Filter toolbar - search & language filter over loaded matches */}
+                {!isInitialSearch && matches.length > 0 && (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="relative flex-1 max-w-md">
+                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                            <input
+                                type="search"
+                                value={filterQuery}
+                                onChange={(e) => setFilterQuery(e.target.value)}
+                                placeholder="Filter matches by name, bio or @login…"
+                                aria-label="Filter matches"
+                                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-card border border-border/60 dark:border-border/30 text-sm text-foreground placeholder:text-muted-foreground/70 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 transition-all"
+                            />
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            <label htmlFor="lang-filter" className="sr-only">Filter by language</label>
+                            <select
+                                id="lang-filter"
+                                value={langFilter}
+                                onChange={(e) => setLangFilter(e.target.value)}
+                                className="py-2.5 px-3.5 rounded-xl bg-card border border-border/60 dark:border-border/30 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer max-w-[180px]"
+                            >
+                                <option value="all">All languages</option>
+                                {availableLangs.map((lang) => (
+                                    <option key={lang} value={lang}>{lang}</option>
+                                ))}
+                            </select>
+
+                            {filtersActive && (
+                                <button
+                                    type="button"
+                                    onClick={clearFilters}
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/70 border border-border/50 transition-colors"
+                                    aria-label="Clear filters"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                    Clear
+                                    <span className="text-muted-foreground/70">
+                                        ({visibleMatches.length} of {matches.length})
+                                    </span>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {matches.map((match) => (
+                    {visibleMatches.map((match) => (
                             <div key={match.id} className="group flex flex-col p-6 rounded-xl bg-card border border-border/60 dark:border-border/30 shadow-sm hover:shadow-2xl hover:shadow-primary/10 dark:hover:bg-card/80 hover:-translate-y-1 transition-all duration-300">
                                 {/* Match Score & Followers */}
-                                <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center justify-between mb-4 gap-2">
                                     {match.matchScore > 0 && (
                                         <div className="flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 py-1 px-2.5 rounded-full">
                                             <Sparkles className="w-3 h-3" />
                                             {match.matchScore}% match
                                         </div>
                                     )}
-                                    {/* Followers Count */}
-                                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-secondary/50 py-1 px-2.5 rounded-full border border-border/40">
-                                        <Users className="w-3 h-3" />
-                                        {((num) => {
-                                            if (!num) return 0;
-                                            if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-                                            return num;
-                                        })(match.followers)}
+                                    <div className="flex items-center gap-1.5 ml-auto">
+                                        {/* Followers Count */}
+                                        <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-secondary/50 py-1 px-2.5 rounded-full border border-border/40" title={`${match.followers ?? 0} followers`}>
+                                            <Users className="w-3 h-3" aria-hidden="true" />
+                                            {formatCount(match.followers)}
+                                        </span>
+                                        {/* Repos Count */}
+                                        {typeof match.public_repos === 'number' && (
+                                            <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-secondary/50 py-1 px-2.5 rounded-full border border-border/40" title={`${match.public_repos} public repos`}>
+                                                <Code className="w-3 h-3" aria-hidden="true" />
+                                                {formatCount(match.public_repos)}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                                 
@@ -561,16 +722,56 @@ function App() {
                                     </p>
                                 </div>
                                 
-                                <a 
-                                    href={match.html_url} 
-                                    target="_blank" 
-                                    rel="noreferrer"
-                                    className="mt-4 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-semibold transition-all"
-                                >
-                                    View Profile <ExternalLink className="w-3 h-3 opacity-50" />
-                                </a>
+                                {/* Follow + View Profile actions */}
+                                <div className="mt-4 grid grid-cols-2 gap-2">
+                                    {followed.has(match.login) ? (
+                                        <div
+                                            className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-primary/15 text-primary text-sm font-bold border border-primary/30"
+                                            aria-label={`You follow @${match.login}`}
+                                        >
+                                            <UserCheck className="w-4 h-4" aria-hidden="true" />
+                                            Following
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleFollow(match.login)}
+                                            disabled={followPending.has(match.login)}
+                                            className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 transition-all disabled:opacity-60 disabled:translate-y-0"
+                                            aria-label={`Follow @${match.login} on GitHub`}
+                                        >
+                                            {followPending.has(match.login) ? (
+                                                <span className="w-4 h-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" aria-hidden="true" />
+                                            ) : (
+                                                <UserPlus className="w-4 h-4" aria-hidden="true" />
+                                            )}
+                                            Follow
+                                        </button>
+                                    )}
+
+                                    <a
+                                        href={match.html_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-semibold transition-all"
+                                        aria-label={`View @${match.login} on GitHub`}
+                                    >
+                                        Profile <ExternalLink className="w-3 h-3 opacity-50" />
+                                    </a>
+                                </div>
                             </div>
                         ))}
+
+                    {/* No results for the active filters */}
+                    {!isInitialSearch && matches.length > 0 && visibleMatches.length === 0 && (
+                        <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4 py-16 text-center text-muted-foreground">
+                            <Search className="w-8 h-8 mx-auto mb-3 opacity-40" aria-hidden="true" />
+                            <p className="text-sm font-medium">No matches for the current filters.</p>
+                            <button type="button" onClick={clearFilters} className="mt-3 text-sm font-semibold text-primary hover:underline">
+                                Show all matches
+                            </button>
+                        </div>
+                    )}
 
                     {/* Show skeleton cards during initial search or while loading with no matches */}
                     {isInitialSearch && (
@@ -606,7 +807,10 @@ function App() {
                             </>
                         ) : (
                             <div className="text-xs text-muted-foreground pt-4">
-                                {matches.length} new users found. People you follow are excluded.
+                                {matches.length} new users found
+                                {filtersActive && <> · showing {visibleMatches.length}</>}
+                                {followed.size > 0 && <> · {followed.size} followed from GitHug</>}
+                                . People you follow are excluded.
                             </div>
                         )}
                     </div>

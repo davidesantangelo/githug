@@ -9,6 +9,9 @@
 const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
 const GITHUB_API_URL = 'https://api.github.com';
 
+// sessionStorage key holding the OAuth `state` nonce for CSRF protection
+export const OAUTH_STATE_KEY = 'githug_oauth_state';
+
 const CONFIG = Object.freeze({
     timeoutMs: 10_000,
     pageSize: 12,
@@ -112,9 +115,10 @@ const parseRateLimit = (headers) => ({
 });
 
 /**
- * Fetch JSON from GitHub API with timeout and error handling
+ * Fetch JSON from GitHub API with timeout and error handling.
+ * Supports any HTTP method and handles 204 No Content responses.
  */
-const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs } = {}) => {
+const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs, method = 'GET' } = {}) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -126,14 +130,22 @@ const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs } 
 
     try {
         const res = await fetch(url, {
+            method,
             headers: buildHeaders(token),
             signal: controller.signal,
         });
 
-        if (res.ok) return res.json();
+        if (res.ok) {
+            // GitHub returns 204 with an empty body for some mutations (e.g. follow)
+            if (res.status === 204) return null;
+            const text = await res.text();
+            return text ? JSON.parse(text) : null;
+        }
 
         const rateLimit = parseRateLimit(res.headers);
-        if (res.status === 403 && rateLimit.remaining === 0) {
+        // Only treat 403 as rate limiting when GitHub actually sent rate-limit
+        // headers; other 403s (e.g. forbidden resources) have a different cause.
+        if (res.status === 403 && rateLimit.remaining === 0 && rateLimit.reset > 0) {
             const waitSec = Math.max(0, rateLimit.reset - Math.floor(Date.now() / 1000));
             throw new GitHubApiError(`Rate limit exceeded. Retry in ${waitSec}s.`, { status: 403, rateLimit });
         }
@@ -315,7 +327,12 @@ const sanitizeQuery = (str) => {
     return str.replace(/["\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
 };
 
-const buildSearchQueries = (profile) => {
+/**
+ * Build GitHub search queries for a profile. `page >= 2` adds diversified
+ * queries (secondary languages, more topics) so pagination surfaces fresh
+ * candidates. Exported for testing.
+ */
+export const buildSearchQueries = (profile, page = 1) => {
     const queries = [];
     const seenQueries = new Set();
 
@@ -348,17 +365,41 @@ const buildSearchQueries = (profile) => {
         }
     }
 
+    // On subsequent pages, diversify the queries so "Load More" surfaces
+    // genuinely new candidates instead of rescoring the same pool.
+    if (page >= 2) {
+        // Secondary/tertiary languages
+        for (const lang of profile.languages.slice(2, 5)) {
+            addQuery(`type:user followers:>5 language:${lang}`);
+        }
+        // More topics from your repos
+        for (const topic of profile.topics.slice(2, 6)) {
+            if (topic.length >= 4 && !/^\d+$/.test(topic)) {
+                addQuery(`type:user followers:>3 ${topic} in:bio`);
+            }
+        }
+        // Location + secondary language
+        if (country && profile.languages[1]) {
+            addQuery(`type:user location:"${country}" language:${profile.languages[1]}`);
+        }
+        // Broader popularity band for the primary language
+        if (profile.languages[0]) {
+            addQuery(`type:user followers:>100 language:${profile.languages[0]}`);
+        }
+    }
+
     return queries;
 };
 
-const searchCandidates = async (token, profile, { excludeSet, signal } = {}) => {
-    const queries = buildSearchQueries(profile);
+const searchCandidates = async (token, profile, { excludeSet, signal, page = 1 } = {}) => {
+    const queries = buildSearchQueries(profile, page);
     const candidates = new Map(); // login -> candidate object
-    const targetCandidates = 50;
+    // Grow the pool on later pages so there is always something new to score
+    const targetCandidates = 50 + Math.max(0, page - 1) * 25;
 
     // Priority 1: Starred owners (high-value, zero API cost)
     // These are pre-vetted by the user's own stars
-    for (const owner of profile.starredOwners.slice(0, 15)) {
+    for (const owner of profile.starredOwners.slice(0, 15 + (page - 1) * 5)) {
         const login = owner.toLowerCase();
         if (!excludeSet.has(login)) {
             candidates.set(login, { login: owner, priority: 1 });
@@ -383,7 +424,7 @@ const searchCandidates = async (token, profile, { excludeSet, signal } = {}) => 
 
                 try {
                     const data = await fetchGitHub(
-                        `${GITHUB_API_URL}/search/users?q=${encodeURIComponent(query)}&per_page=20`,
+                        `${GITHUB_API_URL}/search/users?q=${encodeURIComponent(query)}&per_page=30`,
                         { token, signal }
                     );
                     const items = data?.items || [];
@@ -566,6 +607,31 @@ const normalizeUser = (user, matchInfo) => ({
 // Public API
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Generate a cryptographically random OAuth state nonce (CSRF protection)
+ */
+const generateState = () => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+/**
+ * Validate the OAuth state nonce returned by GitHub against the one we saved
+ * before redirecting. Consumes the saved value (single use).
+ */
+export const validateOAuthState = (state) => {
+    if (!state) return false;
+    let saved = null;
+    try {
+        saved = sessionStorage.getItem(OAUTH_STATE_KEY);
+        sessionStorage.removeItem(OAUTH_STATE_KEY);
+    } catch {
+        return false;
+    }
+    return Boolean(saved) && saved === state;
+};
+
 export const loginWithGithub = () => {
     const clientId = import.meta.env.GITHUG_CLIENT_ID;
     
@@ -586,9 +652,18 @@ export const loginWithGithub = () => {
         console.error('Client ID looks numeric. Use OAuth App Client ID, not GitHub App ID.');
     }
 
+    // CSRF protection: one-time nonce, verified when GitHub redirects back
+    const state = generateState();
+    try {
+        sessionStorage.setItem(OAUTH_STATE_KEY, state);
+    } catch {
+        // Storage unavailable (private mode) - proceed without state protection
+    }
+
     const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
+        state,
         // Ask for read profile + follow list.
         // Even if some tokens can't use /user/following, we also have a public fallback.
         scope: 'read:user user:follow',
@@ -614,8 +689,29 @@ export const getProfile = async (token) => {
     return fetchGitHub(`${GITHUB_API_URL}/user`, { token });
 };
 
+/**
+ * Follow a user on GitHub (requires user:follow scope, granted at login).
+ * Returns { followed: true } on success (204 No Content).
+ */
+export const followUser = async (token, login, { signal } = {}) => {
+    if (!login || typeof login !== 'string') {
+        throw new GitHubApiError('A valid login is required to follow a user');
+    }
+    if (token === 'mock_token') {
+        await new Promise((r) => setTimeout(r, 300));
+        return { followed: true, mock: true };
+    }
+    await fetchGitHub(`${GITHUB_API_URL}/user/following/${encodeURIComponent(login.trim())}`, {
+        method: 'POST',
+        token,
+        signal,
+    });
+    return { followed: true };
+};
+
 export const searchUsers = async (token, currentUser, opts = {}) => {
     const { page = 1, pageSize = CONFIG.pageSize, excludeLogins = [], signal } = opts;
+    const excludeLoginsLower = excludeLogins.map((l) => String(l).toLowerCase());
 
     // Mock mode
     if (token === 'mock_token') {
@@ -626,7 +722,9 @@ export const searchUsers = async (token, currentUser, opts = {}) => {
             { id: 4, login: 'youyuxi', avatar_url: 'https://github.com/youyuxi.png', bio: 'Vue.', location: 'NJ', html_url: 'https://github.com/youyuxi', matchScore: 65, matchReasons: ['Uses TypeScript'], languages: ['TypeScript'] },
         ];
         await new Promise((r) => setTimeout(r, 600));
-        return { items: mockUsers.slice(0, pageSize), hasMore: mockUsers.length > pageSize };
+        // Respect exclusions so mock "Load More" behaves like the real flow
+        const pool = mockUsers.filter((u) => !excludeLoginsLower.includes(u.login.toLowerCase()));
+        return { items: pool.slice(0, pageSize), hasMore: pool.length > pageSize };
     }
 
     // Build user profile
@@ -640,13 +738,13 @@ export const searchUsers = async (token, currentUser, opts = {}) => {
 
     const excludeSet = new Set([
         myProfile.login,
-        ...excludeLogins.map((l) => l.toLowerCase()),
+        ...excludeLoginsLower,
         ...following,
         ...orgs,
     ]);
 
-    // Find candidates
-    const candidates = await searchCandidates(token, myProfile, { excludeSet, signal });
+    // Find candidates (later pages diversify search queries)
+    const candidates = await searchCandidates(token, myProfile, { excludeSet, signal, page });
 
     // Score candidates with concurrency
     const toScore = candidates.slice(0, CONFIG.maxCandidatesToScore);

@@ -1,0 +1,17 @@
+{
+  "name": "GitHug - Find your code mate",
+  "short_name": "GitHug",
+  "description": "Discover new GitHub users you don't follow yet, matched by your stack and interests.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

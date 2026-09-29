@@ -31,9 +31,9 @@ Create (or edit) a `.env` file in the project root:
 # Frontend (exposed to browser via Vite)
 GITHUG_CLIENT_ID=your_client_id_here
 GITHUG_REDIRECT_URI=http://localhost:5173/callback
-GITHUG_FUNCTION_URL=http://localhost:9999/.netlify/functions/auth
+GITHUG_FUNCTION_URL=/api/auth
 
-# Backend (Netlify function) - keep these secret!
+# Backend (Netlify edge function) - keep these secret!
 GITHUG_SERVER_CLIENT_ID=your_client_id_here
 GITHUG_SERVER_CLIENT_SECRET=your_client_secret_here
 GITHUG_SERVER_REDIRECT_URI=http://localhost:5173/callback
@@ -45,29 +45,24 @@ GITHUG_SERVER_REDIRECT_URI=http://localhost:5173/callback
 
 ## 4. Run it locally
 
-### Option A: With Netlify CLI (recommended for full OAuth)
-
 ```bash
-# Terminal 1 (Backend)
-npm run dev:functions
+# Terminal 1 (Netlify CLI - serves the OAuth edge function on :8888)
+npm run dev:netlify
 
 # Terminal 2 (Frontend)
 npm run dev
 ```
 
 This starts:
-- Netlify Functions on **`http://localhost:9999`**
-- Vite dev server on **`http://localhost:5173`**
+- Netlify CLI (edge functions) on **`http://localhost:8888`**
+- Vite dev server on **`http://localhost:5173`** (proxies `/api/*` to :8888)
 
-The app uses `GITHUG_FUNCTION_URL` to talk to the backend on port 9999.
+Open the app at **`http://localhost:5173`**. The app calls the edge function
+through the Vite proxy, so `GITHUG_FUNCTION_URL=/api/auth` works the same way
+in dev and production.
 
-### Option B: Netlify Dev (Experimental)
-
-```bash
-netlify dev
-```
-
-This runs everything on port 8888, but often causes confusion with ports. **Option A is recommended.**
+> **Note**: OAuth codes are single-use and expire quickly (about 10 minutes).
+> If you get "verification failed", just sign in again from the login screen.
 
 ## 5. Deploy to Netlify
 
@@ -98,4 +93,4 @@ This runs everything on port 8888, but often causes confusion with ports. **Opti
 
 ### Token exchange fails
 - Make sure `GITHUG_SERVER_CLIENT_SECRET` is set correctly.
-- If running locally, use `netlify dev` to enable the backend function.
+- If running locally, start the Netlify CLI with `npm run dev:netlify` before the frontend.

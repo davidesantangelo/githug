@@ -53,6 +53,15 @@ export default async (request, context) => {
             });
         }
 
+        // GitHub can answer 200 without a token in edge cases (e.g. mismatched
+        // client_id or already-used code) - treat it as a bad request.
+        if (!data.access_token) {
+            return new Response(JSON.stringify({ error: "bad_verification_code", error_description: "No access token returned by GitHub. The code may be expired or already used." }), {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+
         return new Response(JSON.stringify({
             access_token: data.access_token,
             token_type: data.token_type,

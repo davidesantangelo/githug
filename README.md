@@ -9,13 +9,15 @@
 
 ## Features
 
-- GitHub OAuth authentication
+- GitHub OAuth authentication (with `state` nonce CSRF protection)
 - Find **new users** by location, languages & starred repos
 - Automatically excludes people you already follow
-- Dark/light mode
-- Fast & responsive UI
+- **Follow matches in one click** — follow directly from a card, tracked per account
+- **Filter matches** — search by name/bio/@login and filter by language
+- Dark/light mode (no flash on reload, respects system preference)
+- Fast & responsive UI, installable as a PWA
 - Deploy-ready for Netlify
-- **Architecture**: Separated Client (React) and Server (Netlify Functions)
+- **Architecture**: Separated Client (React) and Server (Netlify Edge Functions)
 
 ## Matching Algorithm
 
@@ -52,12 +54,12 @@ npm install
 # Configure (see Setup below)
 cp .env.example .env
 
-# Run full stack (Split Terminal - Recommended)
+# Run full stack (two terminals)
 
-# Terminal 1: Backend (Netlify Functions)
-npm run dev:functions
+# Terminal 1: Netlify CLI (serves the OAuth edge function on :8888)
+npm run dev:netlify
 
-# Terminal 2: Frontend (Vite)
+# Terminal 2: Frontend (Vite on :5173, proxies /api to :8888)
 npm run dev
 
 # Or Vite only (mock mode, no OAuth)
@@ -65,7 +67,10 @@ npm run dev
 ```
 
 - **Frontend**: [http://localhost:5173](http://localhost:5173)
-- **Backend**: [http://localhost:9999](http://localhost:9999)
+- **Netlify (edge functions)**: [http://localhost:8888](http://localhost:8888)
+
+> The Vite dev server proxies `/api/*` to `netlify dev`, so
+> `GITHUG_FUNCTION_URL=/api/auth` works identically in dev and production.
 
 ## Setup
 
@@ -75,15 +80,13 @@ npm run dev
    > **Important**: Use port **5173** even with `netlify dev` (port 8888 is just a proxy layer).
 
 3. Copy Client ID & generate a Client Secret
-4. Edit `.env`:
-
 4. Edit `.env` (Set ports correctly):
 
 ```env
 # Frontend (exposed to browser)
 GITHUG_CLIENT_ID=your_client_id
 GITHUG_REDIRECT_URI=http://localhost:5173/callback
-GITHUG_FUNCTION_URL=http://localhost:9999/.netlify/functions/auth
+GITHUG_FUNCTION_URL=/api/auth
 
 # Backend (Netlify function - keep secret!)
 GITHUG_SERVER_CLIENT_ID=your_client_id
@@ -107,14 +110,18 @@ GITHUG_SERVER_REDIRECT_URI=http://localhost:5173/callback
 githug/
 ├── src/
 │   ├── App.jsx           # Main app component
+│   ├── ErrorBoundary.jsx # Render-error recovery screen
 │   ├── services/
-│   │   └── github.js     # GitHub API & OAuth
+│   │   └── github.js     # GitHub API, OAuth & matching
 │   └── lib/
-│       └── utils.js      # Utilities
+│       └── utils.js      # Utilities (cn, formatCount)
 ├── netlify/
-│   └── functions/
+│   └── edge-functions/
 │       └── auth.js       # OAuth token exchange
+├── .github/workflows/
+│   └── ci.yml            # Lint, test & build on push/PR
 ├── netlify.toml          # Netlify config
+├── CHANGELOG.md          # Release history
 └── .env.example          # Env template
 ```
 
@@ -123,13 +130,19 @@ githug/
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start Frontend only (Mock mode/UI) |
-| `netlify dev` | Start Full Stack (Client + Functions) |
-| `npm run dev:functions` | Start Functions server only |
+| `npm run dev:netlify` | Start Netlify CLI with edge functions |
 | `npm run build` | Build for production |
 | `npm run preview` | Preview production build |
 | `npm run test` | Run tests in watch mode |
 | `npm run test:run` | Run tests once |
 | `npm run test:coverage` | Run tests with coverage report |
+| `npm run lint` | Lint with ESLint |
+
+## Releasing
+
+Releases follow [Semantic Versioning](https://semver.org/). History is tracked
+in [CHANGELOG.md](CHANGELOG.md); CI (lint + tests + build) must pass on `main`
+before tagging.
 
 ## License
 
