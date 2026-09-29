@@ -61,21 +61,26 @@ describe('GitHub Service', () => {
                 followers: 120,
                 following: 50,
                 public_repos: 30,
+                token_scopes: 'read:user user:follow',
             })
         })
 
-        it('should fetch profile from GitHub API with real token', async () => {
+        it('should fetch profile from GitHub API with real token and its OAuth scopes', async () => {
             const mockProfile = {
                 login: 'testuser',
                 name: 'Test User',
                 avatar_url: 'https://github.com/testuser.png',
             }
 
-            global.fetch.mockResolvedValueOnce(mockResponse(mockProfile))
+            global.fetch.mockResolvedValueOnce(
+                mockResponse(mockProfile, { headers: { 'x-oauth-scopes': 'read:user user:follow' } })
+            )
 
             const profile = await getProfile('real_token')
 
-            expect(profile).toEqual(mockProfile)
+            // The profile carries the token's effective scopes (used by the UI
+            // to decide whether following is possible)
+            expect(profile).toEqual({ ...mockProfile, token_scopes: 'read:user user:follow' })
             expect(global.fetch).toHaveBeenCalledWith(
                 'https://api.github.com/user',
                 expect.objectContaining({
@@ -84,6 +89,15 @@ describe('GitHub Service', () => {
                     }),
                 })
             )
+        })
+
+        it('should report empty scopes for GitHub App user-to-server tokens', async () => {
+            // GitHub App tokens omit the x-oauth-scopes header entirely
+            global.fetch.mockResolvedValueOnce(mockResponse({ login: 'u2s' }))
+
+            const profile = await getProfile('u2s_token')
+
+            expect(profile.token_scopes).toBe('')
         })
     })
 
@@ -134,12 +148,31 @@ describe('GitHub Service', () => {
             await expect(followUser('real_token', null)).rejects.toThrow(/valid login/i)
         })
 
-        it('should surface API errors', async () => {
+        it('should surface API errors with token scope context', async () => {
             global.fetch.mockResolvedValueOnce(
-                mockResponse({ message: 'Resource not accessible by integration' }, { ok: false, status: 403 })
+                mockResponse(
+                    { message: 'Resource not accessible by integration' },
+                    {
+                        ok: false,
+                        status: 403,
+                        headers: {
+                            'x-oauth-scopes': '',
+                            'x-accepted-oauth-scopes': 'user, user:follow',
+                        },
+                    }
+                )
             )
 
-            await expect(followUser('real_token', 'octocat')).rejects.toThrow(/not accessible/i)
+            try {
+                await followUser('real_token', 'octocat')
+                expect.unreachable('followUser should have thrown')
+            } catch (e) {
+                expect(e.status).toBe(403)
+                expect(e.message).toMatch(/not accessible by integration/i)
+                // Empty scopes + accepted user:follow = classic GitHub App token signature
+                expect(e.scopes).toBe('')
+                expect(e.acceptedScopes).toBe('user, user:follow')
+            }
         })
     })
 
@@ -246,7 +279,8 @@ describe('GitHub Service', () => {
         it('should handle empty responses safely', async () => {
             global.fetch.mockResolvedValueOnce(mockResponse('', { status: 200 }))
 
-            await expect(getProfile('empty_token')).resolves.toBeNull()
+            // Empty body must not crash; the profile degrades to just the scopes
+            await expect(getProfile('empty_token')).resolves.toEqual({ token_scopes: '' })
         })
     })
 })

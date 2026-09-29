@@ -94,6 +94,7 @@ function App() {
     const [authError, setAuthError] = useState('')
     const [followed, setFollowed] = useState(() => new Set())
     const [followPending, setFollowPending] = useState(() => new Set())
+    const [followError, setFollowError] = useState('')
     const [filterQuery, setFilterQuery] = useState('')
     const [langFilter, setLangFilter] = useState('all')
 
@@ -186,13 +187,40 @@ function App() {
         setLangFilter('all')
     }
 
+    // Proactive follow capability, derived from the token's real OAuth scopes
+    // (read from the x-oauth-scopes header of /user — see getProfile).
+    //   - 'read:user user:follow' (OAuth App, scope granted) → following works
+    //   - scopes without user:follow/user → stale grant → offer Reconnect
+    //   - '' (GitHub App user-to-server token) → following impossible → explain
+    const followSupport = useMemo(() => {
+        const scopes = user?.token_scopes
+        if (scopes === null || scopes === undefined) return { available: true, reason: '' }
+        const list = scopes.split(/[\s,]+/).filter(Boolean)
+        if (list.includes('user:follow') || list.includes('user')) {
+            return { available: true, reason: '' }
+        }
+        if (list.length === 0) return { available: false, reason: 'github-app' }
+        return { available: false, reason: 'reconnect' }
+    }, [user?.token_scopes])
+
+    // Re-grant the session: drop the token and start a fresh OAuth login with
+    // the user:follow scope request (GitHub re-prompts when new scopes are asked)
+    const handleReconnect = () => {
+        if (searchAbortRef.current) searchAbortRef.current.abort()
+        clearMatchesCache()
+        clearCaches()
+        try { localStorage.removeItem('githug_token') } catch { /* ignore */ }
+        loginWithGithub()
+    }
+
     const handleFollow = useCallback(async (login) => {
         if (!user?.login || !login || followed.has(login) || followPending.has(login)) return
+        if (!followSupport.available) return
         const token = localStorage.getItem('githug_token')
         if (!token) return
 
         setFollowPending((prev) => new Set(prev).add(login))
-        setAuthError('')
+        setFollowError('')
         try {
             await followUser(token, login)
             setFollowed((prev) => {
@@ -202,7 +230,22 @@ function App() {
                 return next
             })
         } catch (e) {
-            setAuthError(e?.message || `Could not follow @${login}. Your token may lack the user:follow scope.`)
+            const msg = (e?.message || '')
+            if (e?.status === 401) {
+                // Session died mid-use: force the login flow
+                try { localStorage.removeItem('githug_token') } catch { /* ignore */ }
+                window.location.reload()
+                return
+            }
+            if (e?.status === 403 && /not accessible by integration/i.test(msg)) {
+                setFollowError('Following is not available with this token: the configured Client ID belongs to a GitHub App. Create an OAuth App (see SETUP_GITHUB_AUTH.md) and update GITHUG_CLIENT_ID to enable following.')
+            } else if (msg.toLowerCase().includes('needs the') && msg.toLowerCase().includes('scope')) {
+                setFollowError(`GitHub rejected the follow: "${msg}". Reconnect your account to grant the user:follow permission.`)
+            } else if (e?.status === 403 && /rate limit|abuse/i.test(msg)) {
+                setFollowError('GitHub is rate limiting follow requests. Please wait a minute and try again.')
+            } else {
+                setFollowError(msg || `Could not follow @${login}.`)
+            }
         } finally {
             setFollowPending((prev) => {
                 const next = new Set(prev)
@@ -210,7 +253,7 @@ function App() {
                 return next
             })
         }
-    }, [user, followed, followPending])
+    }, [user, followed, followPending, followSupport.available])
   
   const handleRefresh = () => {
       // Set flag to skip cache hydration on next load
@@ -595,6 +638,69 @@ function App() {
                     </div>
                 </div>
 
+                {/* Follow availability banner */}
+                {user && !followSupport.available && (
+                    <div
+                        role="status"
+                        className={`flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 rounded-2xl border text-sm ${
+                            followSupport.reason === 'github-app'
+                                ? 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400'
+                                : 'bg-primary/10 border-primary/30 text-primary'
+                        }`}
+                    >
+                        <div className="flex-1 leading-relaxed">
+                            {followSupport.reason === 'github-app' ? (
+                                <>
+                                    <strong>Following is unavailable with this token.</strong> The configured GitHub
+                                    Client ID belongs to a <strong>GitHub App</strong>, whose tokens can't follow
+                                    users (API answers 403). Create an <strong>OAuth App</strong> and update{' '}
+                                    <code className="text-xs bg-secondary/70 rounded px-1.5 py-0.5">GITHUG_CLIENT_ID</code>{' '}
+                                    — a guide is in <span className="font-semibold">SETUP_GITHUB_AUTH.md</span>.
+                                </>
+                            ) : (
+                                <>
+                                    <strong>Following is unavailable for this session.</strong> Your token lacks the{' '}
+                                    <code className="text-xs bg-secondary/70 rounded px-1.5 py-0.5">user:follow</code>{' '}
+                                    permission. Reconnect to grant it.
+                                </>
+                            )}
+                        </div>
+                        {followSupport.reason === 'reconnect' && (
+                            <button
+                                type="button"
+                                onClick={handleReconnect}
+                                className="shrink-0 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:shadow-lg hover:shadow-primary/25 transition-all"
+                            >
+                                Reconnect
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {/* Follow runtime error */}
+                {followError && (
+                    <div role="alert" className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 rounded-2xl border border-destructive/40 bg-destructive/10 text-sm text-destructive">
+                        <p className="flex-1 leading-relaxed">{followError}</p>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleReconnect}
+                                className="shrink-0 px-4 py-2 rounded-lg bg-secondary text-secondary-foreground text-xs font-bold hover:bg-secondary/70 transition-all"
+                            >
+                                Reconnect
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setFollowError('')}
+                                className="shrink-0 p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                                aria-label="Dismiss follow error"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Filter toolbar - search & language filter over loaded matches */}
                 {!isInitialSearch && matches.length > 0 && (
                     <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -736,8 +842,13 @@ function App() {
                                         <button
                                             type="button"
                                             onClick={() => handleFollow(match.login)}
-                                            disabled={followPending.has(match.login)}
-                                            className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 transition-all disabled:opacity-60 disabled:translate-y-0"
+                                            disabled={followPending.has(match.login) || !followSupport.available}
+                                            title={!followSupport.available
+                                                ? (followSupport.reason === 'github-app'
+                                                    ? 'Following unavailable: the Client ID belongs to a GitHub App (see banner)'
+                                                    : 'Reconnect your account to enable following')
+                                                : `Follow @${match.login} on GitHub`}
+                                            className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 transition-all disabled:opacity-60 disabled:translate-y-0 disabled:cursor-not-allowed"
                                             aria-label={`Follow @${match.login} on GitHub`}
                                         >
                                             {followPending.has(match.login) ? (

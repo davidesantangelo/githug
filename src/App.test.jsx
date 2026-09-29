@@ -346,6 +346,142 @@ describe('App Component', () => {
     })
   })
 
+  describe('Follow capability detection', () => {
+    const mockUser = {
+      login: 'testuser',
+      name: 'Test User',
+      avatar_url: 'https://github.com/testuser.png',
+    }
+
+    const mockMatches = [
+      {
+        id: 1,
+        login: 'match1',
+        name: 'Match One',
+        avatar_url: 'https://github.com/match1.png',
+        html_url: 'https://github.com/match1',
+        bio: 'First match',
+        public_repos: 5,
+        matchScore: 85,
+        matchReasons: [],
+        languages: ['JavaScript'],
+        followers: 200,
+      },
+    ]
+
+    beforeEach(() => {
+      localStorage.setItem('githug_token', 'test_token')
+      searchUsers.mockResolvedValue({ items: mockMatches, hasMore: false })
+      followUser.mockResolvedValue({ followed: true })
+    })
+
+    it('shows the GitHub App banner and disables Follow when the token has no scopes', async () => {
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: '' })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(/GitHub App/i)
+      })
+
+      const followButton = screen.getByRole('button', { name: /Follow @match1/i })
+      expect(followButton).toBeDisabled()
+      // No reconnect button is offered for GitHub App tokens (it wouldn't help)
+      expect(screen.queryByRole('button', { name: /^Reconnect$/ })).not.toBeInTheDocument()
+    })
+
+    it('offers Reconnect when the token has scopes but lacks user:follow', async () => {
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: 'read:user' })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(/user:follow/i)
+      })
+      expect(screen.getByRole('button', { name: /^Reconnect$/ })).toBeInTheDocument()
+
+      const followButton = screen.getByRole('button', { name: /Follow @match1/i })
+      expect(followButton).toBeDisabled()
+    })
+
+    it('Reconnect clears the session and starts a fresh OAuth login', async () => {
+      const user = userEvent.setup()
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: 'read:user' })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^Reconnect$/ })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /^Reconnect$/ }))
+
+      expect(clearCaches).toHaveBeenCalled()
+      expect(localStorage.removeItem).toHaveBeenCalledWith('githug_token')
+      expect(loginWithGithub).toHaveBeenCalledTimes(1)
+    })
+
+    it('follows normally when the token carries user:follow', async () => {
+      const user = userEvent.setup()
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: 'read:user user:follow' })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Follow @match1/i })).toBeEnabled()
+      })
+
+      await user.click(screen.getByRole('button', { name: /Follow @match1/i }))
+
+      expect(followUser).toHaveBeenCalledWith('test_token', 'match1')
+      await waitFor(() => {
+        expect(screen.getByText('Following')).toBeInTheDocument()
+      })
+    })
+
+    it('shows GitHub App guidance when a follow fails with 403 integration error', async () => {
+      const user = userEvent.setup()
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: 'read:user user:follow' })
+      followUser.mockRejectedValueOnce(
+        Object.assign(new Error('Resource not accessible by integration'), { status: 403 })
+      )
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Follow @match1/i })).toBeEnabled()
+      })
+
+      await user.click(screen.getByRole('button', { name: /Follow @match1/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(/OAuth App/i)
+      })
+      // Reconnect is still offered as an escape hatch
+      expect(screen.getByRole('button', { name: /^Reconnect$/ })).toBeInTheDocument()
+    })
+
+    it('shows rate-limit guidance when a follow hits a secondary rate limit', async () => {
+      const user = userEvent.setup()
+      getProfile.mockResolvedValue({ ...mockUser, token_scopes: 'read:user user:follow' })
+      followUser.mockRejectedValueOnce(
+        Object.assign(new Error('You have exceeded a secondary rate limit'), { status: 403 })
+      )
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Follow @match1/i })).toBeEnabled()
+      })
+
+      await user.click(screen.getByRole('button', { name: /Follow @match1/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(/rate limiting/i)
+      })
+    })
+  })
+
   describe('Match filtering', () => {
     const mockUser = { login: 'testuser', name: 'Test User' }
     const mockMatches = [

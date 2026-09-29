@@ -12,8 +12,16 @@ First tagged release, shipped from [githug.link](https://githug.link).
 ### Added
 
 - **Follow from GitHug** — follow a match directly from their card with one click
-  (uses the `user:follow` scope already requested at login). Followed users are
-  tracked per account and shown as "Following", so you never lose track.
+  via GitHub's official REST endpoint (`PUT /user/following/{username}`, uses the
+  `user:follow` scope already requested at login). Followed users are tracked per
+  account and shown as "Following".
+- **Follow capability detection** — the app reads the token's real OAuth scopes
+  from the `x-oauth-scopes` header at login and proactively tells you when
+  following won't work: a GitHub App Client ID (its tokens cannot follow users,
+  API answers 403) is explained with a guide, while a stale OAuth session
+  without `user:follow` gets a one-click **Reconnect** that re-grants it.
+  Runtime follow errors (403 integration, scope rejected, secondary rate
+  limits) get specific, actionable guidance too.
 - **Match filtering** — search loaded matches by name, bio or @login, and filter
   by language via a dropdown. Includes an empty state with a one-click reset.
 - **OAuth CSRF protection** — the login flow now sends a one-time `state` nonce

@@ -91,12 +91,16 @@ const userCache = new LRUCache();
 // Error handling
 // ─────────────────────────────────────────────────────────────
 class GitHubApiError extends Error {
-    constructor(message, { status, rateLimit, requestId } = {}) {
+    constructor(message, { status, rateLimit, requestId, scopes, acceptedScopes } = {}) {
         super(message);
         this.name = 'GitHubApiError';
         this.status = status;
         this.rateLimit = rateLimit;
         this.requestId = requestId;
+        // Classic OAuth scopes of the token (empty for GitHub App tokens)
+        this.scopes = scopes;
+        // Scopes the endpoint would accept
+        this.acceptedScopes = acceptedScopes;
     }
 }
 
@@ -117,8 +121,10 @@ const parseRateLimit = (headers) => ({
 /**
  * Fetch JSON from GitHub API with timeout and error handling.
  * Supports any HTTP method and handles 204 No Content responses.
+ * With `includeHeaders: true` returns { data, headers } so callers can read
+ * OAuth scope headers (x-oauth-scopes / x-accepted-oauth-scopes).
  */
-const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs, method = 'GET' } = {}) => {
+const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs, method = 'GET', includeHeaders = false } = {}) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -137,9 +143,12 @@ const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs, m
 
         if (res.ok) {
             // GitHub returns 204 with an empty body for some mutations (e.g. follow)
-            if (res.status === 204) return null;
+            if (res.status === 204) {
+                return includeHeaders ? { data: null, headers: res.headers } : null;
+            }
             const text = await res.text();
-            return text ? JSON.parse(text) : null;
+            const data = text ? JSON.parse(text) : null;
+            return includeHeaders ? { data, headers: res.headers } : data;
         }
 
         const rateLimit = parseRateLimit(res.headers);
@@ -151,7 +160,11 @@ const fetchGitHub = async (url, { token, signal, timeoutMs = CONFIG.timeoutMs, m
         }
 
         const body = await res.json().catch(() => ({}));
-        throw new GitHubApiError(body.message || `GitHub API error (${res.status})`, { status: res.status });
+        throw new GitHubApiError(body.message || `GitHub API error (${res.status})`, {
+            status: res.status,
+            scopes: res.headers.get('x-oauth-scopes') || '',
+            acceptedScopes: res.headers.get('x-accepted-oauth-scopes') || '',
+        });
     } catch (err) {
         if (err.name === 'AbortError') throw new GitHubApiError('Request timed out');
         if (err instanceof GitHubApiError) throw err;
@@ -652,6 +665,17 @@ export const loginWithGithub = () => {
         console.error('Client ID looks numeric. Use OAuth App Client ID, not GitHub App ID.');
     }
 
+    // "Iv23li" client IDs belong to GitHub Apps: their tokens are
+    // user-to-server tokens with no classic scopes and CANNOT follow users
+    // (the follow API answers 403 "Resource not accessible by integration").
+    // OAuth App client IDs are "Iv1." (legacy) or "Ov23_" (current).
+    if (/^Iv23li/.test(clientId)) {
+        console.warn(
+            '[GitHug] This Client ID belongs to a GitHub App — login works, but Follow will fail (403). ' +
+            'Create an OAuth App (see SETUP_GITHUB_AUTH.md) and update GITHUG_CLIENT_ID.'
+        );
+    }
+
     // CSRF protection: one-time nonce, verified when GitHub redirects back
     const state = generateState();
     try {
@@ -683,10 +707,15 @@ export const getProfile = async (token) => {
             followers: 120,
             following: 50,
             public_repos: 30,
+            token_scopes: 'read:user user:follow',
         };
     }
 
-    return fetchGitHub(`${GITHUB_API_URL}/user`, { token });
+    // Read the token's effective OAuth scopes from the x-oauth-scopes header:
+    // - OAuth App token → e.g. "read:user user:follow"
+    // - GitHub App user-to-server token → header absent → '' (cannot follow)
+    const { data, headers } = await fetchGitHub(`${GITHUB_API_URL}/user`, { token, includeHeaders: true });
+    return { ...(data || {}), token_scopes: headers.get('x-oauth-scopes') || '' };
 };
 
 /**
