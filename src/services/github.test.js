@@ -93,7 +93,7 @@ describe('GitHub Service', () => {
             expect(res).toEqual({ followed: true, mock: true })
         })
 
-        it('should POST the follow endpoint and handle 204 No Content', async () => {
+        it('should PUT the follow endpoint and handle 204 No Content', async () => {
             global.fetch.mockResolvedValueOnce(mockResponse('', { status: 204 }))
 
             const res = await followUser('real_token', 'octocat')
@@ -102,12 +102,22 @@ describe('GitHub Service', () => {
             expect(global.fetch).toHaveBeenCalledWith(
                 'https://api.github.com/user/following/octocat',
                 expect.objectContaining({
-                    method: 'POST',
+                    method: 'PUT',
                     headers: expect.objectContaining({
                         Authorization: 'Bearer real_token',
                     }),
                 })
             )
+        })
+
+        it('should use PUT, not POST (GitHub answers 404 to POST on this route)', async () => {
+            // Regression test: the follow endpoint is PUT /user/following/{username}
+            global.fetch.mockResolvedValueOnce(mockResponse('', { status: 204 }))
+
+            await followUser('real_token', 'octocat')
+
+            const [, options] = global.fetch.mock.calls[0]
+            expect(options.method).toBe('PUT')
         })
 
         it('should encode the login and reject invalid input', async () => {

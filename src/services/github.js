@@ -691,6 +691,7 @@ export const getProfile = async (token) => {
 
 /**
  * Follow a user on GitHub (requires user:follow scope, granted at login).
+ * NOTE: this endpoint is a PUT — GitHub answers 404 to POST on this route.
  * Returns { followed: true } on success (204 No Content).
  */
 export const followUser = async (token, login, { signal } = {}) => {
@@ -702,7 +703,7 @@ export const followUser = async (token, login, { signal } = {}) => {
         return { followed: true, mock: true };
     }
     await fetchGitHub(`${GITHUB_API_URL}/user/following/${encodeURIComponent(login.trim())}`, {
-        method: 'POST',
+        method: 'PUT',
         token,
         signal,
     });

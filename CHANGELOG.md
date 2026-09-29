@@ -24,7 +24,7 @@ First tagged release, shipped from [githug.link](https://githug.link).
 - **PWA manifest** — installable as a standalone app (`manifest.webmanifest`).
 - **GitHub Actions CI** — lint, test and build run on every push/PR to `main`
   (`.github/workflows/ci.yml`).
-- **Unit tests** — 53 tests covering the GitHub service (OAuth state validation,
+- **Unit tests** — 54 tests covering the GitHub service (OAuth state validation,
   follow, search query diversification, rate-limit and network errors), utility
   helpers, and the full App component (login, follow, filtering, caching, error
   and OAuth callback handling).
@@ -58,6 +58,8 @@ First tagged release, shipped from [githug.link](https://githug.link).
 - README duplicate setup step and outdated project structure.
 - `fetchGitHub` supports non-GET methods and `204 No Content` responses
   (previously it would crash with a JSON parse error on the follow endpoint).
+- `npm run lint` (and CI) now passes: ESLint is aware of the Deno runtime in
+  Netlify Edge Functions and of Node/Vitest globals in tests.
 
 ## [0.x] - Pre-release
 

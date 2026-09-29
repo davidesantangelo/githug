@@ -1,4 +1,4 @@
-export default async (request, context) => {
+export default async (request) => {
     // Only allow POST requests
     if (request.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
